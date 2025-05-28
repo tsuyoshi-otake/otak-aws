@@ -257,12 +257,12 @@ const AWSArchitectureBoard = () => {
       const maxUrlLength = 2000;
       
       if (urlLength > maxUrlLength) {
-        // URL長さが制限を超えた場合
+        // URL length exceeds the limit
         alert(
-          `シェアできませんでした。\n\n` +
-          `アーキテクチャが大きすぎるため、共有URLを生成できません。\n` +
-          `URL長さ: ${urlLength}文字 (上限: ${maxUrlLength}文字)\n\n` +
-          `より小さなアーキテクチャで再度お試しください。`
+          `Unable to share.\n\n` +
+          `The architecture is too large to generate a share URL.\n` +
+          `URL length: ${urlLength} characters (limit: ${maxUrlLength} characters)\n\n` +
+          `Please try again with a smaller architecture.`
         );
         return;
       }
