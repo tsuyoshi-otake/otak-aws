@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Trash2, Download, RotateCcw, Plus, Square, Box, Move } from 'lucide-react';
+import { Trash2, Download, RotateCcw, Plus, Square, Box, Move, Share } from 'lucide-react';
 
 const AWSArchitectureBoard = () => {
   const [draggedItem, setDraggedItem] = useState(null);
@@ -16,6 +16,8 @@ const AWSArchitectureBoard = () => {
   const [showGrid, setShowGrid] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [showCopyModal, setShowCopyModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
   const [editingConnectionLabel, setEditingConnectionLabel] = useState(null);
   const [editingConnectionText, setEditingConnectionText] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -26,6 +28,7 @@ const AWSArchitectureBoard = () => {
   const [importText, setImportText] = useState('');
   const [detectedFormat, setDetectedFormat] = useState('unknown');
   const [zoomLevel, setZoomLevel] = useState(100); // 100% or 75%
+  const [copySuccess, setCopySuccess] = useState(false);
   
   // リサイズ機能用の状態
   const [resizingContainer, setResizingContainer] = useState(null);
@@ -92,6 +95,45 @@ const AWSArchitectureBoard = () => {
     setTimeout(() => setIsUndoing(false), 100);
   }, [undoHistory]);
 
+  // URL復元機能
+  useEffect(() => {
+    const loadFromUrl = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedData = urlParams.get('data');
+      
+      if (sharedData) {
+        try {
+          const decodedData = atob(sharedData);
+          const parsedData = JSON.parse(decodedData);
+          
+          // データを復元
+          setBoardItems(parsedData.boardItems || []);
+          setContainers(parsedData.containers || []);
+          setConnections(parsedData.connections || []);
+          
+          // 設定を復元（オプション）
+          if (parsedData.settings) {
+            setSnapToGrid(parsedData.settings.snapToGrid ?? snapToGrid);
+            setShowGrid(parsedData.settings.showGrid ?? showGrid);
+            setIsDarkMode(parsedData.settings.isDarkMode ?? isDarkMode);
+            setAdvancedMode(parsedData.settings.advancedMode ?? advancedMode);
+            setZoomLevel(parsedData.settings.zoomLevel ?? zoomLevel);
+          }
+          
+          // URLからパラメータを削除（ブラウザ履歴は残す）
+          const newUrl = window.location.origin + window.location.pathname;
+          window.history.replaceState({}, '', newUrl);
+          
+          console.log('Architecture loaded from URL');
+        } catch (error) {
+          console.error('Failed to load architecture from URL:', error);
+        }
+      }
+    };
+
+    loadFromUrl();
+  }, []); // 空の依存配列で初回のみ実行
+
   // キーボードイベントリスナー
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -105,6 +147,46 @@ const AWSArchitectureBoard = () => {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [executeUndo]);
+
+  // Share機能: 現在の構成をBASE64エンコードしたURLを生成
+  const generateShareUrl = () => {
+    const currentData = {
+      version: "1.0",
+      timestamp: Date.now(),
+      boardItems,
+      containers,
+      connections,
+      settings: {
+        snapToGrid,
+        showGrid,
+        isDarkMode,
+        advancedMode,
+        zoomLevel
+      }
+    };
+
+    try {
+      const jsonString = JSON.stringify(currentData);
+      const encodedData = btoa(jsonString);
+      const baseUrl = window.location.origin + window.location.pathname;
+      const shareUrl = `${baseUrl}?data=${encodedData}`;
+      
+      setShareUrl(shareUrl);
+      setShowShareModal(true);
+      
+      // クリップボードにコピー
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        console.log('Share URL copied to clipboard');
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000); // 2秒後にフィードバックを非表示
+      }).catch(err => {
+        console.error('Failed to copy URL to clipboard:', err);
+      });
+      
+    } catch (error) {
+      console.error('Failed to generate share URL:', error);
+    }
+  };
 
   // 基本的なAWSサービス（常に表示）
   const basicAwsServices = [
@@ -1684,9 +1766,14 @@ const AWSArchitectureBoard = () => {
           : 'bg-white border-gray-200'
       }`}>
         <div className="p-6">
-          <h2 className={`text-xl font-semibold mb-6 ${
-            isDarkMode ? 'text-white' : 'text-gray-900'
-          }`}>AWS Architecture Tool</h2>
+          <div className="mb-6">
+            <h2 className={`text-xl font-semibold ${
+              isDarkMode ? 'text-white' : 'text-gray-900'
+            }`}>otak-aws</h2>
+            <p className={`text-sm mt-1 ${
+              isDarkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>AWS Architecture Tool</p>
+          </div>
           
           {/* ツール選択 */}
           <div className="mb-6">
@@ -2048,37 +2135,6 @@ const AWSArchitectureBoard = () => {
             </>
           )}
 
-          {/* 操作説明 */}
-          <div className={`mt-8 p-4 rounded-xl text-xs ${
-            isDarkMode 
-              ? 'bg-blue-900 bg-opacity-30 text-blue-300'
-              : 'bg-blue-50 text-blue-700'
-          }`}>
-            <p className="font-semibold mb-2">How to use:</p>
-            <p>• Right-click or Shift + click to connect</p>
-            <p>• Double-click to edit labels</p>
-            <p>• Double-click connections to add labels</p>
-            <p>• Drag services to move them</p>
-            <p>• Drag <span className="font-medium">empty</span> container header to move</p>
-            <p>• Remove services from container to move it</p>
-            <p>• <span className="font-medium">Nest containers</span> by dropping one inside another</p>
-            <p>• Prevents circular nesting (A in B, B in A)</p>
-            <p>• <span className="font-medium">Cloud containers</span>: AWS Cloud → VPC → Subnet → Security Group</p>
-            <p>• <span className="font-medium">On-premises containers</span>: Data Center → Corporate Network → Server Rack</p>
-            <p>• Hover container edges to <span className="font-medium">resize</span></p>
-            <p>• <span className="font-medium">Ctrl+Z</span> to undo last action</p>
-            <p>• <span className="font-medium">Zoom 100%/75%</span> to change grid size (80px/60px)</p>
-            <p>• Enable Advanced for more services</p>
-            <p>• <span className="font-medium">Import</span> by pasting text</p>
-            <p>• <span className="font-medium">Export</span> as Mermaid code</p>
-            <div className="mt-3 pt-3 border-t border-current border-opacity-20">
-              <p className="font-semibold mb-1">Supported formats:</p>
-              <p>• <span className="font-medium">Import</span>: JSON (save data) & Eraser.io Mermaid</p>
-              <p>• <span className="font-medium">Export</span>: Eraser.io & Flowchart Mermaid</p>
-              <p>• <span className="font-medium">Nested containers</span>: VPC → Subnet → Security Group</p>
-              <p>• <span className="font-medium">Zoom modes</span>: 100% (standard) & 75% (compact)</p>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -2260,6 +2316,18 @@ const AWSArchitectureBoard = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v6a2 2 0 002 2h2m0 0h2m-2 0v4l3-3m0 0l-3-3m3 3H9m11-11V9a2 2 0 01-2 2m-2 0V6a2 2 0 00-2-2V2" />
                   </svg>
                   Export
+                </button>
+                <button
+                  onClick={generateShareUrl}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all border font-medium ${
+                    isDarkMode
+                      ? 'bg-blue-900 bg-opacity-50 text-blue-300 border-blue-700 hover:bg-blue-900 hover:bg-opacity-70'
+                      : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                  }`}
+                  title="Share current architecture via URL"
+                >
+                  <Share size={16} />
+                  Share
                 </button>
               </div>
             </div>
@@ -2961,7 +3029,7 @@ Examples:
         {showSuccessModal && (
           <div className="fixed inset-0 bg-black bg-opacity-20 flex items-center justify-center backdrop-blur-sm" style={{ zIndex: 99999 }}>
             <div className={`rounded-2xl p-8 shadow-2xl border max-w-md ${
-              isDarkMode 
+              isDarkMode
                 ? 'bg-gray-800 border-gray-700'
                 : 'bg-white border-gray-200'
             }`}>
@@ -2993,6 +3061,84 @@ Examples:
                   }`}
                 >
                   Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Shareモーダル */}
+        {showShareModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-20 flex items-center justify-center backdrop-blur-sm" style={{ zIndex: 99999 }}>
+            <div className={`rounded-2xl p-8 shadow-2xl border max-w-2xl w-full mx-4 ${
+              isDarkMode
+                ? 'bg-gray-800 border-gray-700'
+                : 'bg-white border-gray-200'
+            }`}>
+              <div className="text-center">
+                <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                  <Share className="w-8 h-8 text-white" />
+                </div>
+                <h2 className={`text-xl font-semibold mb-2 ${
+                  isDarkMode ? 'text-white' : 'text-gray-900'
+                }`}>Share Architecture</h2>
+                <p className={`mb-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                  Share your architecture with others via URL
+                </p>
+                
+                <div className={`text-sm rounded-lg p-3 mb-4 ${
+                  isDarkMode ? 'bg-blue-900 bg-opacity-30 text-blue-300' : 'bg-blue-50 text-blue-700'
+                }`}>
+                  <p>✓ URL copied to clipboard automatically</p>
+                  <p>✓ Includes all services, containers, and connections</p>
+                  <p>✓ Preserves layout and settings</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className={`block text-sm font-medium mb-2 text-left ${
+                    isDarkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
+                    Share URL:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={shareUrl}
+                      readOnly
+                      className={`flex-1 px-3 py-2 border rounded-lg text-sm font-mono ${
+                        isDarkMode
+                          ? 'bg-gray-700 border-gray-600 text-gray-200'
+                          : 'bg-gray-50 border-gray-300 text-gray-800'
+                      }`}
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareUrl);
+                        setCopySuccess(true);
+                        setTimeout(() => setCopySuccess(false), 2000);
+                      }}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                        copySuccess
+                          ? 'bg-green-600 hover:bg-green-700 text-white'
+                          : isDarkMode
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                      }`}
+                    >
+                      {copySuccess ? '✓ Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                    isDarkMode
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  Close
                 </button>
               </div>
             </div>
