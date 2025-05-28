@@ -1,14 +1,52 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Trash2, Download, RotateCcw, Plus, Square, Box, Move, Share } from 'lucide-react';
+import { compressData, decompressData, generateShareUrl, parseSharedUrl, checkDataSize, type ArchitectureData } from './utils/compression';
+
+// 型定義
+interface ServiceItem {
+  id: string;
+  name: string;
+  customName?: string;
+  color: string;
+  category: string;
+  x: number;
+  y: number;
+  parentContainerId?: string | null;
+  type: 'service';
+}
+
+interface ContainerItem {
+  id: string;
+  name: string;
+  color: string;
+  borderStyle?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  parentContainerId?: string | null;
+  type: 'container';
+}
+
+interface Connection {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+}
+
+type DraggedItem = (ServiceItem | ContainerItem) & {
+  type: 'service' | 'container';
+};
 
 const AWSArchitectureBoard = () => {
-  const [draggedItem, setDraggedItem] = useState(null);
-  const [boardItems, setBoardItems] = useState([]);
-  const [containers, setContainers] = useState([]);
-  const [connections, setConnections] = useState([]);
+  const [draggedItem, setDraggedItem] = useState<DraggedItem | null>(null);
+  const [boardItems, setBoardItems] = useState<ServiceItem[]>([]);
+  const [containers, setContainers] = useState<ContainerItem[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [selectedTool, setSelectedTool] = useState('service'); // 'service', 'container', 'connection'
-  const [connectionStart, setConnectionStart] = useState(null);
+  const [connectionStart, setConnectionStart] = useState<ServiceItem | null>(null);
   const [isDrawingConnection, setIsDrawingConnection] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [editingLabel, setEditingLabel] = useState(null);
@@ -36,15 +74,23 @@ const AWSArchitectureBoard = () => {
   const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
   const [resizeStartSize, setResizeStartSize] = useState({ width: 0, height: 0 });
   
+  // 履歴の型定義
+  interface HistoryState {
+    boardItems: ServiceItem[];
+    containers: ContainerItem[];
+    connections: Connection[];
+    timestamp: number;
+  }
+  
   // Undo機能用の履歴管理
-  const [undoHistory, setUndoHistory] = useState([]);
+  const [undoHistory, setUndoHistory] = useState<HistoryState[]>([]);
   const [isUndoing, setIsUndoing] = useState(false);
   const maxHistorySize = 50; // 最大履歴数
   const baseGridSize = 80;
   const baseServiceSize = 80; // サービスアイテムのベースサイズ
   const gridSize = Math.round(baseGridSize * (zoomLevel / 100));
   const serviceSize = Math.round(baseServiceSize * (zoomLevel / 100));
-  const boardRef = useRef(null);
+  const boardRef = useRef<HTMLDivElement>(null);
 
   // 現在の状態を履歴に保存
   const saveToHistory = useCallback(() => {
@@ -148,43 +194,94 @@ const AWSArchitectureBoard = () => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [executeUndo]);
 
-  // Share機能: 現在の構成をBASE64エンコードしたURLを生成
-  const generateShareUrl = () => {
-    const currentData = {
+  // URL読み込み機能: ページ読み込み時に共有URLからデータを復元
+  useEffect(() => {
+    const handleLoadFromUrl = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const dataParam = urlParams.get('data');
+      
+      if (dataParam) {
+        try {
+          const parsedData = parseSharedUrl(window.location.href);
+          
+          if (parsedData) {
+            setBoardItems(parsedData.boardItems);
+            setContainers(parsedData.containers);
+            setConnections(parsedData.connections);
+            
+            // ズームレベルのみ復元
+            if (parsedData.settings) {
+              setZoomLevel(parsedData.settings.zoomLevel ?? 100);
+            }
+            
+            console.log('Architecture loaded from shared URL (LZ-String decompressed)');
+          } else {
+            console.warn('Failed to parse shared URL data');
+          }
+        } catch (error) {
+          console.error('Error loading shared URL:', error);
+        }
+        
+        // URLパラメータをクリアして履歴を汚さないようにする
+        const newUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+      }
+    };
+
+    handleLoadFromUrl();
+  }, []); // 初回レンダリング時のみ実行
+
+  // Share機能: 現在の構成をLZ-String圧縮してURLを生成
+  const handleGenerateShareUrl = () => {
+    const currentData: ArchitectureData = {
       version: "1.0",
       timestamp: Date.now(),
       boardItems,
       containers,
       connections,
       settings: {
-        snapToGrid,
-        showGrid,
-        isDarkMode,
-        advancedMode,
         zoomLevel
       }
     };
 
     try {
-      const jsonString = JSON.stringify(currentData);
-      const encodedData = btoa(jsonString);
-      const baseUrl = window.location.origin + window.location.pathname;
-      const shareUrl = `${baseUrl}?data=${encodedData}`;
+      // まず圧縮データを生成
+      const compressed = compressData(currentData);
       
-      setShareUrl(shareUrl);
+      // ベースURLとクエリパラメータを含めた全体のURL長さを計算
+      const baseUrl = "https://tsuyoshi-otake.github.io/otak-aws/";
+      const fullUrl = `${baseUrl}?data=${compressed}`;
+      const urlLength = fullUrl.length;
+      
+      // Chromeの制限（2,083文字）に余裕を持たせて2,000文字を上限とする
+      const maxUrlLength = 2000;
+      
+      if (urlLength > maxUrlLength) {
+        // URL長さが制限を超えた場合
+        alert(
+          `シェアできませんでした。\n\n` +
+          `アーキテクチャが大きすぎるため、共有URLを生成できません。\n` +
+          `URL長さ: ${urlLength}文字 (上限: ${maxUrlLength}文字)\n\n` +
+          `より小さなアーキテクチャで再度お試しください。`
+        );
+        return;
+      }
+      
+      setShareUrl(fullUrl);
       setShowShareModal(true);
       
       // クリップボードにコピー
-      navigator.clipboard.writeText(shareUrl).then(() => {
-        console.log('Share URL copied to clipboard');
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        console.log('Share URL copied to clipboard (LZ-String compressed)');
         setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000); // 2秒後にフィードバックを非表示
+        setTimeout(() => setCopySuccess(false), 2000);
       }).catch(err => {
         console.error('Failed to copy URL to clipboard:', err);
       });
       
     } catch (error) {
       console.error('Failed to generate share URL:', error);
+      alert('共有URLの生成に失敗しました。');
     }
   };
 
@@ -2318,7 +2415,7 @@ const AWSArchitectureBoard = () => {
                   Export
                 </button>
                 <button
-                  onClick={generateShareUrl}
+                  onClick={handleGenerateShareUrl}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all border font-medium ${
                     isDarkMode
                       ? 'bg-blue-900 bg-opacity-50 text-blue-300 border-blue-700 hover:bg-blue-900 hover:bg-opacity-70'
