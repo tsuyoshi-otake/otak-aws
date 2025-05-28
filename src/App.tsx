@@ -253,8 +253,8 @@ const AWSArchitectureBoard = () => {
       const fullUrl = `${baseUrl}?data=${compressed}`;
       const urlLength = fullUrl.length;
       
-      // Chromeの制限（2,083文字）に余裕を持たせて2,000文字を上限とする
-      const maxUrlLength = 2000;
+      // URL length limit increased to 32,000 characters
+      const maxUrlLength = 32000;
       
       if (urlLength > maxUrlLength) {
         // URL length exceeds the limit
